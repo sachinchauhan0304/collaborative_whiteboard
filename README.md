@@ -96,3 +96,6 @@ In the project directory, you can run:
 - `npm run build`: Builds the app for production.
 - `npm run start`: Starts a Next.js production server.
 - `npm run lint`: Lints the project files.
+
+## working link
+(https://collaborativewhiteboard-cgmzxr4pugq2w7hhsgifbh.streamlit.app/)
