@@ -18,6 +18,8 @@ if 'color' not in st.session_state:
     st.session_state.color = "#000000"
 if 'size' not in st.session_state:
     st.session_state.size = 5
+if 'start_point' not in st.session_state:  # For shapes that need a start point
+    st.session_state.start_point = None
 
 # Tools panel
 with st.sidebar:
@@ -32,6 +34,9 @@ with st.sidebar:
     
     if st.button("Clear Canvas"):
         st.session_state.canvas = Image.new("RGB", (800, 600), "white")
+        st.session_state.drawing = False
+        st.session_state.last_point = None
+        st.session_state.start_point = None
     
     if st.button("Save Canvas"):
         buf = io.BytesIO()
@@ -43,7 +48,10 @@ with st.sidebar:
             mime="image/png"
         )
 
-# Drawing canvas
+# Create a placeholder for the canvas
+canvas_placeholder = st.empty()
+
+# Display the canvas
 canvas = st.session_state.canvas.copy()
 draw = ImageDraw.Draw(canvas)
 
@@ -52,64 +60,112 @@ img_bytes = io.BytesIO()
 canvas.save(img_bytes, format='PNG')
 img_data = img_bytes.getvalue()
 
-# Create clickable image
-clicked = st.image(img_data, use_column_width=True, caption="Draw on the canvas")
+# Display the image in the placeholder
+canvas_placeholder.image(img_data, use_container_width=True, caption="Draw on the canvas")
 
-# Mouse event handling
-if clicked:
-    mouse_coords = st.session_state.get("mouse_coords", None)
-    
-    if mouse_coords:
-        x, y = mouse_coords["x"], mouse_coords["y"]
-        
-        if st.session_state.drawing:
-            if st.session_state.last_point:
-                # Draw based on tool
-                if st.session_state.tool == "pen":
-                    draw.line(
-                        [st.session_state.last_point, (x, y)],
-                        fill=st.session_state.color,
-                        width=st.session_state.size
-                    )
-                elif st.session_state.tool == "eraser":
-                    draw.line(
-                        [st.session_state.last_point, (x, y)],
-                        fill="white",
-                        width=st.session_state.size
-                    )
-                elif st.session_state.tool == "line":
-                    # For line, we'll draw on mouse up
-                    pass
-                    
-            st.session_state.last_point = (x, y)
-        else:
-            st.session_state.drawing = True
-            st.session_state.last_point = (x, y)
-    else:
-        st.session_state.drawing = False
-        if st.session_state.tool == "line" and st.session_state.last_point:
-            draw.line(
-                [st.session_state.last_point, (x, y)],
-                fill=st.session_state.color,
-                width=st.session_state.size
-            )
-
-# Save the modified canvas
-st.session_state.canvas = canvas
+# Mouse event handling using streamlit's built-in click events
+mouse_clicked = st.session_state.get("mouse_clicked", False)
+mouse_x = st.session_state.get("mouse_x", 0)
+mouse_y = st.session_state.get("mouse_y", 0)
 
 # JavaScript for mouse coordinates
 st.components.v1.html(f"""
 <script>
 const img = document.querySelector('.stImage img');
 if (img) {{
-    img.onclick = (e) => {{
+    img.onmousedown = (e) => {{
         const rect = e.target.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-        Streamlit.setComponentValue({{x: x, y: y}});
+        Streamlit.setComponentValue({{mouse_clicked: true, mouse_x: x, mouse_y: y}});
+    }}
+    
+    img.onmousemove = (e) => {{
+        if (e.buttons === 1) {{  // Only if left button is pressed
+            const rect = e.target.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            Streamlit.setComponentValue({{mouse_clicked: true, mouse_x: x, mouse_y: y}});
+        }}
+    }}
+    
+    img.onmouseup = (e) => {{
+        const rect = e.target.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        Streamlit.setComponentValue({{mouse_clicked: true, mouse_x: x, mouse_y: y, mouse_up: true}});
     }}
 }}
 </script>
 """, height=0)
 
-# Run with: streamlit run app.py
+# Handle drawing based on mouse events
+if mouse_clicked:
+    if not st.session_state.drawing:
+        # Start drawing
+        st.session_state.drawing = True
+        st.session_state.last_point = (mouse_x, mouse_y)
+        st.session_state.start_point = (mouse_x, mouse_y)  # Save start point for shapes
+    else:
+        # Continue drawing
+        if st.session_state.tool == "pen":
+            draw.line(
+                [st.session_state.last_point, (mouse_x, mouse_y)],
+                fill=st.session_state.color,
+                width=st.session_state.size
+            )
+            st.session_state.last_point = (mouse_x, mouse_y)
+        elif st.session_state.tool == "eraser":
+            draw.line(
+                [st.session_state.last_point, (mouse_x, mouse_y)],
+                fill="white",
+                width=st.session_state.size
+            )
+            st.session_state.last_point = (mouse_x, mouse_y)
+        
+        # For shapes, we'll draw on mouse up
+        st.session_state.last_point = (mouse_x, mouse_y)
+    
+    # Check if this was a mouse up event
+    if st.session_state.get("mouse_up", False):
+        if st.session_state.tool == "line" and st.session_state.start_point:
+            draw.line(
+                [st.session_state.start_point, (mouse_x, mouse_y)],
+                fill=st.session_state.color,
+                width=st.session_state.size
+            )
+        elif st.session_state.tool == "rectangle" and st.session_state.start_point:
+            draw.rectangle(
+                [st.session_state.start_point, (mouse_x, mouse_y)],
+                outline=st.session_state.color,
+                width=st.session_state.size
+            )
+        elif st.session_state.tool == "circle" and st.session_state.start_point:
+            # Calculate radius based on distance from start point
+            radius = ((mouse_x - st.session_state.start_point[0])**2 + 
+                     (mouse_y - st.session_state.start_point[1])**2)**0.5
+            draw.ellipse(
+                [
+                    st.session_state.start_point[0] - radius,
+                    st.session_state.start_point[1] - radius,
+                    st.session_state.start_point[0] + radius,
+                    st.session_state.start_point[1] + radius
+                ],
+                outline=st.session_state.color,
+                width=st.session_state.size
+            )
+        
+        # Reset drawing state
+        st.session_state.drawing = False
+        st.session_state.last_point = None
+        st.session_state.start_point = None
+        st.session_state.mouse_up = False
+    
+    # Update the canvas in session state
+    st.session_state.canvas = canvas
+    
+    # Update the displayed image
+    img_bytes = io.BytesIO()
+    st.session_state.canvas.save(img_bytes, format='PNG')
+    img_data = img_bytes.getvalue()
+    canvas_placeholder.image(img_data, use_container_width=True, caption="Draw on the canvas")
