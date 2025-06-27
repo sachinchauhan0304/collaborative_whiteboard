@@ -1,115 +1,91 @@
-# app.py - CollabDraw Streamlit Version
+# app.py - FULL WORKING VERSION
 import streamlit as st
+from streamlit_drawable_canvas import st_canvas  # <-- MAKE SURE THIS PACKAGE IS INSTALLED
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 import io
-import base64
 
-# Initialize session state
-if 'canvas' not in st.session_state:
-    st.session_state.canvas = Image.new("RGB", (800, 600), "white")
-if 'drawing' not in st.session_state:
-    st.session_state.drawing = False
-if 'last_point' not in st.session_state:
-    st.session_state.last_point = None
+# 1. FIRST INSTALL REQUIRED PACKAGE (run this in terminal):
+# pip install streamlit-drawable-canvas numpy pillow
+
+# 2. SET PAGE CONFIG (you can customize this)
+st.set_page_config(
+    page_title="CollabDraw Whiteboard",
+    page_icon=":pencil2:",
+    layout="wide"
+)
+
+# 3. INITIALIZE SESSION STATE (no changes needed here)
 if 'tool' not in st.session_state:
-    st.session_state.tool = "pen"
+    st.session_state.tool = "freedraw"
 if 'color' not in st.session_state:
     st.session_state.color = "#000000"
 if 'size' not in st.session_state:
     st.session_state.size = 5
+if 'bg_color' not in st.session_state:
+    st.session_state.bg_color = "#FFFFFF"
+if 'canvas_key' not in st.session_state:
+    st.session_state.canvas_key = "default"
 
-# Tools panel
+# 4. SIDEBAR CONTROLS (customize tools/colors if needed)
 with st.sidebar:
-    st.title("Drawing Tools")
+    st.title("🛠️ Tools")
+    
+    # Tool selection - change emoji/icons if desired
     st.session_state.tool = st.radio(
-        "Tool",
-        ["pen", "rectangle", "circle", "line", "eraser"],
-        horizontal=True
+        "Drawing Tool:",
+        ["freedraw", "line", "rect", "circle", "transform"],
+        format_func=lambda x: {
+            "freedraw": "✏️ Pen",
+            "line": "📏 Line", 
+            "rect": "🟦 Rectangle",
+            "circle": "⭕ Circle",
+            "transform": "✋ Select"
+        }[x]
     )
-    st.session_state.color = st.color_picker("Color", "#000000")
-    st.session_state.size = st.slider("Size", 1, 20, 5)
     
-    if st.button("Clear Canvas"):
-        st.session_state.canvas = Image.new("RGB", (800, 600), "white")
+    # Color pickers - change default colors if needed
+    st.session_state.color = st.color_picker("Line Color", st.session_state.color)
+    st.session_state.size = st.slider("Brush Size", 1, 30, st.session_state.size)
+    st.session_state.bg_color = st.color_picker("Background", st.session_state.bg_color)
     
-    if st.button("Save Canvas"):
-        buf = io.BytesIO()
-        st.session_state.canvas.save(buf, format="PNG")
-        st.download_button(
-            label="Download Drawing",
-            data=buf.getvalue(),
-            file_name="collabdraw.png",
-            mime="image/png"
-        )
+    # Action buttons
+    if st.button("🧹 Clear Canvas"):
+        st.session_state.canvas_key = str(hash("new_canvas"))  # Reset canvas
+    if st.button("💾 Save Drawing"):
+        pass  # Handled below
 
-# Drawing canvas
-canvas = st.session_state.canvas.copy()
-draw = ImageDraw.Draw(canvas)
+# 5. MAIN CANVAS AREA (change width/height if needed)
+st.title("🎨 Collaborative Whiteboard")
+canvas_result = st_canvas(
+    fill_color="rgba(255, 255, 255, 0.3)",
+    stroke_width=st.session_state.size,
+    stroke_color=st.session_state.color,
+    background_color=st.session_state.bg_color,
+    height=600,
+    width=800,
+    drawing_mode=st.session_state.tool,
+    key=f"canvas_{st.session_state.canvas_key}",
+    update_streamlit=True
+)
 
-# Convert to bytes for display
-img_bytes = io.BytesIO()
-canvas.save(img_bytes, format='PNG')
-img_data = img_bytes.getvalue()
+# 6. SAVE FUNCTIONALITY (no changes needed)
+if canvas_result.image_data is not None:
+    img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    st.download_button(
+        "⬇️ Download Drawing",
+        buf.getvalue(),
+        "whiteboard.png",
+        "image/png"
+    )
 
-# Create clickable image
-clicked = st.image(img_data, use_column_width=True, caption="Draw on the canvas")
-
-# Mouse event handling
-if clicked:
-    mouse_coords = st.session_state.get("mouse_coords", None)
-    
-    if mouse_coords:
-        x, y = mouse_coords["x"], mouse_coords["y"]
-        
-        if st.session_state.drawing:
-            if st.session_state.last_point:
-                # Draw based on tool
-                if st.session_state.tool == "pen":
-                    draw.line(
-                        [st.session_state.last_point, (x, y)],
-                        fill=st.session_state.color,
-                        width=st.session_state.size
-                    )
-                elif st.session_state.tool == "eraser":
-                    draw.line(
-                        [st.session_state.last_point, (x, y)],
-                        fill="white",
-                        width=st.session_state.size
-                    )
-                elif st.session_state.tool == "line":
-                    # For line, we'll draw on mouse up
-                    pass
-                    
-            st.session_state.last_point = (x, y)
-        else:
-            st.session_state.drawing = True
-            st.session_state.last_point = (x, y)
-    else:
-        st.session_state.drawing = False
-        if st.session_state.tool == "line" and st.session_state.last_point:
-            draw.line(
-                [st.session_state.last_point, (x, y)],
-                fill=st.session_state.color,
-                width=st.session_state.size
-            )
-
-# Save the modified canvas
-st.session_state.canvas = canvas
-
-# JavaScript for mouse coordinates
-st.components.v1.html(f"""
-<script>
-const img = document.querySelector('.stImage img');
-if (img) {{
-    img.onclick = (e) => {{
-        const rect = e.target.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        Streamlit.setComponentValue({{x: x, y: y}});
-    }}
-}}
-</script>
-""", height=0)
-
-# Run with: streamlit run app.py
+# 7. INSTRUCTIONS (customize if needed)
+with st.expander("ℹ️ Instructions"):
+    st.write("""
+    - Draw with mouse/touchpad
+    - Change tools from sidebar
+    - Adjust colors and brush size
+    - Save or clear when done
+    """)
