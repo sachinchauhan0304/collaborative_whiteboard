@@ -1,9 +1,8 @@
 # app.py - CollabDraw Streamlit Version
 import streamlit as st
-import numpy as np
 from PIL import Image, ImageDraw
 import io
-import base64
+import numpy as np
 
 # Initialize session state
 if 'canvas' not in st.session_state:
@@ -18,7 +17,7 @@ if 'color' not in st.session_state:
     st.session_state.color = "#000000"
 if 'size' not in st.session_state:
     st.session_state.size = 5
-if 'start_point' not in st.session_state:  # For shapes that need a start point
+if 'start_point' not in st.session_state:
     st.session_state.start_point = None
 
 # Tools panel
@@ -48,102 +47,150 @@ with st.sidebar:
             mime="image/png"
         )
 
-# Create a placeholder for the canvas
+# Create a canvas placeholder
 canvas_placeholder = st.empty()
 
-# Display the canvas
-canvas = st.session_state.canvas.copy()
-draw = ImageDraw.Draw(canvas)
+# Display the current canvas
+def display_canvas():
+    img_bytes = io.BytesIO()
+    st.session_state.canvas.save(img_bytes, format='PNG')
+    canvas_placeholder.image(img_bytes.getvalue(), use_container_width=True, caption="Draw on the canvas")
 
-# Convert to bytes for display
-img_bytes = io.BytesIO()
-canvas.save(img_bytes, format='PNG')
-img_data = img_bytes.getvalue()
+display_canvas()
 
-# Display the image in the placeholder
-canvas_placeholder.image(img_data, use_container_width=True, caption="Draw on the canvas")
-
-# Mouse event handling using streamlit's built-in click events
-mouse_clicked = st.session_state.get("mouse_clicked", False)
-mouse_x = st.session_state.get("mouse_x", 0)
-mouse_y = st.session_state.get("mouse_y", 0)
-
-# JavaScript for mouse coordinates
-st.components.v1.html(f"""
-<script>
-const img = document.querySelector('.stImage img');
-if (img) {{
-    img.onmousedown = (e) => {{
-        const rect = e.target.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        Streamlit.setComponentValue({{mouse_clicked: true, mouse_x: x, mouse_y: y}});
-    }}
-    
-    img.onmousemove = (e) => {{
-        if (e.buttons === 1) {{  // Only if left button is pressed
-            const rect = e.target.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            Streamlit.setComponentValue({{mouse_clicked: true, mouse_x: x, mouse_y: y}});
-        }}
-    }}
-    
-    img.onmouseup = (e) => {{
-        const rect = e.target.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        Streamlit.setComponentValue({{mouse_clicked: true, mouse_x: x, mouse_y: y, mouse_up: true}});
-    }}
-}}
-</script>
-""", height=0)
-
-# Handle drawing based on mouse events
-if mouse_clicked:
-    if not st.session_state.drawing:
-        # Start drawing
-        st.session_state.drawing = True
-        st.session_state.last_point = (mouse_x, mouse_y)
-        st.session_state.start_point = (mouse_x, mouse_y)  # Save start point for shapes
-    else:
-        # Continue drawing
-        if st.session_state.tool == "pen":
-            draw.line(
-                [st.session_state.last_point, (mouse_x, mouse_y)],
-                fill=st.session_state.color,
-                width=st.session_state.size
-            )
-            st.session_state.last_point = (mouse_x, mouse_y)
-        elif st.session_state.tool == "eraser":
-            draw.line(
-                [st.session_state.last_point, (mouse_x, mouse_y)],
-                fill="white",
-                width=st.session_state.size
-            )
-            st.session_state.last_point = (mouse_x, mouse_y)
+# Mouse event handling using st.file_uploader workaround
+uploaded_file = st.file_uploader("", type=["png"], label_visibility="collapsed")
+if uploaded_file is not None:
+    # Get mouse coordinates from the file name (workaround)
+    try:
+        coords = uploaded_file.name.split("_")[-1].split(".")[0].split("-")
+        x, y = float(coords[0]), float(coords[1])
+        action = "drag" if len(coords) > 2 else "click"
         
-        # For shapes, we'll draw on mouse up
-        st.session_state.last_point = (mouse_x, mouse_y)
+        # Create a new drawing context
+        canvas = st.session_state.canvas.copy()
+        draw = ImageDraw.Draw(canvas)
+        
+        if action == "click":
+            # Handle mouse down
+            st.session_state.drawing = True
+            st.session_state.start_point = (x, y)
+            st.session_state.last_point = (x, y)
+            
+            if st.session_state.tool == "pen":
+                draw.ellipse(
+                    [(x-st.session_state.size, y-st.session_state.size),
+                     (x+st.session_state.size, y+st.session_state.size)],
+                    fill=st.session_state.color
+                )
+            elif st.session_state.tool == "eraser":
+                draw.ellipse(
+                    [(x-st.session_state.size, y-st.session_state.size),
+                     (x+st.session_state.size, y+st.session_state.size)],
+                    fill="white"
+                )
+        else:
+            # Handle mouse move/drag
+            if st.session_state.drawing and st.session_state.last_point:
+                if st.session_state.tool == "pen":
+                    draw.line(
+                        [st.session_state.last_point, (x, y)],
+                        fill=st.session_state.color,
+                        width=st.session_state.size
+                    )
+                elif st.session_state.tool == "eraser":
+                    draw.line(
+                        [st.session_state.last_point, (x, y)],
+                        fill="white",
+                        width=st.session_state.size
+                    )
+                
+                st.session_state.last_point = (x, y)
+        
+        st.session_state.canvas = canvas
+        display_canvas()
+        
+    except:
+        pass
+
+# JavaScript for mouse tracking
+st.markdown("""
+<script>
+// Create a transparent canvas overlay
+const img = document.querySelector('.stImage img');
+if (img) {
+    const overlay = document.createElement('canvas');
+    overlay.style.position = 'absolute';
+    overlay.style.left = img.offsetLeft + 'px';
+    overlay.style.top = img.offsetTop + 'px';
+    overlay.width = img.width;
+    overlay.height = img.height;
+    overlay.style.pointerEvents = 'auto';
+    overlay.style.cursor = 'crosshair';
+    img.parentNode.insertBefore(overlay, img.nextSibling);
     
-    # Check if this was a mouse up event
-    if st.session_state.get("mouse_up", False):
-        if st.session_state.tool == "line" and st.session_state.start_point:
-            draw.line(
-                [st.session_state.start_point, (mouse_x, mouse_y)],
-                fill=st.session_state.color,
-                width=st.session_state.size
-            )
-        elif st.session_state.tool == "rectangle" and st.session_state.start_point:
+    // Track mouse events
+    overlay.onmousedown = (e) => {
+        const x = e.offsetX * (img.naturalWidth / img.width);
+        const y = e.offsetY * (img.naturalHeight / img.height);
+        const fakeFile = new File([""], `draw_${x}-${y}.png`);
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(fakeFile);
+        const fileInput = document.querySelector('input[type="file"]');
+        fileInput.files = dataTransfer.files;
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    
+    overlay.onmousemove = (e) => {
+        if (e.buttons === 1) {  // Left button pressed
+            const x = e.offsetX * (img.naturalWidth / img.width);
+            const y = e.offsetY * (img.naturalHeight / img.height);
+            const fakeFile = new File([""], `draw_${x}-${y}-drag.png`);
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(fakeFile);
+            const fileInput = document.querySelector('input[type="file"]');
+            fileInput.files = dataTransfer.files;
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    };
+    
+    overlay.onmouseup = (e) => {
+        const x = e.offsetX * (img.naturalWidth / img.width);
+        const y = e.offsetY * (img.naturalHeight / img.height);
+        
+        // Handle shape drawing on mouse up
+        const fakeFile = new File([""], `draw_${x}-${y}-shape.png`);
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(fakeFile);
+        const fileInput = document.querySelector('input[type="file"]');
+        fileInput.files = dataTransfer.files;
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+}
+</script>
+""", unsafe_allow_html=True)
+
+# Handle shape drawing on mouse up
+if st.session_state.get('drawing', False) and st.session_state.start_point:
+    # Get the latest canvas
+    canvas = st.session_state.canvas.copy()
+    draw = ImageDraw.Draw(canvas)
+    
+    # Check if we should draw a shape
+    if st.session_state.tool in ["rectangle", "circle", "line"]:
+        # Get the end point (use last_point if available)
+        end_point = st.session_state.last_point if st.session_state.last_point else st.session_state.start_point
+        
+        if st.session_state.tool == "rectangle":
             draw.rectangle(
-                [st.session_state.start_point, (mouse_x, mouse_y)],
+                [st.session_state.start_point, end_point],
                 outline=st.session_state.color,
                 width=st.session_state.size
             )
-        elif st.session_state.tool == "circle" and st.session_state.start_point:
-            # Calculate radius based on distance from start point
-            radius = ((mouse_x - st.session_state.start_point[0])**2 + 
-                     (mouse_y - st.session_state.start_point[1])**2)**0.5
+        elif st.session_state.tool == "circle":
+            # Calculate radius based on distance
+            radius = ((end_point[0] - st.session_state.start_point[0])**2 + 
+                     (end_point[1] - st.session_state.start_point[1])**2)**0.5
             draw.ellipse(
                 [
                     st.session_state.start_point[0] - radius,
@@ -154,18 +201,17 @@ if mouse_clicked:
                 outline=st.session_state.color,
                 width=st.session_state.size
             )
+        elif st.session_state.tool == "line":
+            draw.line(
+                [st.session_state.start_point, end_point],
+                fill=st.session_state.color,
+                width=st.session_state.size
+            )
         
-        # Reset drawing state
-        st.session_state.drawing = False
-        st.session_state.last_point = None
-        st.session_state.start_point = None
-        st.session_state.mouse_up = False
+        st.session_state.canvas = canvas
+        display_canvas()
     
-    # Update the canvas in session state
-    st.session_state.canvas = canvas
-    
-    # Update the displayed image
-    img_bytes = io.BytesIO()
-    st.session_state.canvas.save(img_bytes, format='PNG')
-    img_data = img_bytes.getvalue()
-    canvas_placeholder.image(img_data, use_container_width=True, caption="Draw on the canvas")
+    # Reset drawing state
+    st.session_state.drawing = False
+    st.session_state.start_point = None
+    st.session_state.last_point = None
